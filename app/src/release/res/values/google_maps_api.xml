@@ -1,0 +1,18 @@
+<resources>
+    <!--
+    TODO: Before you run your application, you need a Google Maps API key.
+
+    To get one, follow this link, follow the directions and press "Create" at the end:
+
+https://console.developers.google.com/flows/enableapi?apiid=maps_android_backend&keyType=CLIENT_SIDE_ANDROID&r=11:BB:81:AB:7F:53:16:1F:BF:22:4B:6A:33:69:DB:AD:FE:5A:54:C6%3Bcom.github.danielwojciechowski.watnavigator
+
+    You can also add your credentials to an existing key, using this line:
+    11:BB:81:AB:7F:53:16:1F:BF:22:4B:6A:33:69:DB:AD:FE:5A:54:C6;com.github.danielwojciechowski.watnavigator
+
+    Once you have your key (it starts with "AIza"), replace the "google_maps_key"
+    string in this file.
+    -->
+    <string name="google_maps_key" translatable="false" templateMergeStrategy="preserve">
+        YOUR_KEY_HERE
+    </string>
+</resources>
