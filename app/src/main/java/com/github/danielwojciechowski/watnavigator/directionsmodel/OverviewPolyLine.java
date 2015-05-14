@@ -1,4 +1,4 @@
-package com.github.danielwojciechowski.watnavigator;
+package com.github.danielwojciechowski.watnavigator.directionsmodel;
 
 import com.google.api.client.util.Key;
 

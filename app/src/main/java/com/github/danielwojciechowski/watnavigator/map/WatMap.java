@@ -1,4 +1,4 @@
-package com.github.danielwojciechowski.watnavigator;
+package com.github.danielwojciechowski.watnavigator.map;
 
 import android.content.res.Configuration;
 import android.database.Cursor;
@@ -9,33 +9,29 @@ import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.AsyncTask;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.SystemClock;
 import android.support.v4.widget.DrawerLayout;
 import android.support.v7.app.ActionBarDrawerToggle;
 import android.support.v7.app.AppCompatActivity;
 import android.view.MenuItem;
 import android.view.View;
-import android.view.animation.Interpolator;
-import android.view.animation.LinearInterpolator;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.github.danielwojciechowski.watnavigator.R;
 import com.github.danielwojciechowski.watnavigator.datamodel.Building;
+import com.github.danielwojciechowski.watnavigator.datamodel.DatabaseRes;
+import com.github.danielwojciechowski.watnavigator.directionsmodel.DirectionsResult;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GooglePlayServicesUtil;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.SupportMapFragment;
-import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.CameraPosition;
 import com.google.android.gms.maps.model.LatLng;
-import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
-import com.google.android.gms.maps.model.Polyline;
 import com.google.android.gms.maps.model.PolylineOptions;
 import com.google.api.client.extensions.android.http.AndroidHttp;
 import com.google.api.client.http.GenericUrl;
@@ -48,7 +44,6 @@ import com.google.api.client.json.JsonFactory;
 import com.google.api.client.json.JsonObjectParser;
 import com.google.api.client.json.jackson2.JacksonFactory;
 import com.google.maps.android.PolyUtil;
-import com.google.maps.android.SphericalUtil;
 
 import java.net.URL;
 import java.util.ArrayList;
@@ -64,15 +59,16 @@ public class WatMap extends AppCompatActivity implements LocationListener {
 
     private GoogleMap googleMap;
     private Location location;
-    private Marker destinationMarker;
     private TextView locationTv;
     private boolean mapPrepared = false;
+    private Building selectedBuilding;
 
     private ListView mDrawerList;
-    private ArrayAdapter<String> mAdapter;
     private ActionBarDrawerToggle mDrawerToggle;
     private DrawerLayout mDrawerLayout;
     private String mActivityTitle;
+
+    private boolean navigationMode = false;
 
     private Map<String, Building> buildings = new TreeMap<>(new Comparator<String>() {
         @Override public int compare(String s1, String s2) {
@@ -110,12 +106,17 @@ public class WatMap extends AppCompatActivity implements LocationListener {
         LocationManager locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
         Criteria criteria = new Criteria();
         String bestProvider = locationManager.getBestProvider(criteria, true);
-        location = locationManager.getLastKnownLocation(bestProvider);
+
+        locationManager.requestLocationUpdates(bestProvider, 5000, 0, this);
 //        location = googleMap.getMyLocation();
+
+        location = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+        if(locationManager.getLastKnownLocation(bestProvider) != null) {
+            location = locationManager.getLastKnownLocation(bestProvider);
+        }
         if (location != null) {
             initializeLocation(location);
         }
-        locationManager.requestLocationUpdates(bestProvider, 0, 0, this);
     }
 
     public void initializeLocation(Location location) {
@@ -123,8 +124,8 @@ public class WatMap extends AppCompatActivity implements LocationListener {
         double latitude = location.getLatitude();
         double longitude = location.getLongitude();
         LatLng latLng = new LatLng(latitude, longitude);
-/*        googleMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
-        googleMap.animateCamera(CameraUpdateFactory.zoomTo(ZOOM_LEVEL));*/
+        googleMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
+        googleMap.animateCamera(CameraUpdateFactory.zoomTo(ZOOM_LEVEL));
 
         updateLocationText(latitude, longitude);
     }
@@ -146,30 +147,32 @@ public class WatMap extends AppCompatActivity implements LocationListener {
 
         new DirectionsFetcher(Double.toString(location.getLatitude()) + "," + Double.toString(location.getLongitude()),
                 Double.toString(latLng.latitude) + "," + Double.toString(latLng.longitude)).execute();
+        navigationMode = true;
     }
 
     @Override
     public void onLocationChanged(Location location) {
-/*        if(!mapPrepared){
+        System.out.println("Location CHANGED!!!");
+        if(!mapPrepared){
             initializeLocation(location);
             mapPrepared = true;
-        }*/
+        }
         updateLocationText(location.getLatitude(), location.getLongitude());
+        this.location = location;
+
+        if(navigationMode){
+            new DirectionsFetcher(Double.toString(location.getLatitude()) + "," + Double.toString(location.getLongitude()),
+                    Double.toString(selectedBuilding.getLatitude()) + "," + Double.toString(selectedBuilding.getLongitude())).execute();
+           // googleMap.animateCamera(CameraUpdateFactory.newLatLng(new LatLng(location.getLatitude(), location.getLongitude())));
+        }
     }
 
     private Building setDestinationMarker(int position) {
-        Building building = buildings.get(buildings.keySet().toArray(new String[buildings.size()])[position]);
+        selectedBuilding = buildings.get(buildings.keySet().toArray(new String[buildings.size()])[position]);
         googleMap.clear();
-        destinationMarker = googleMap.addMarker(new MarkerOptions().position(building.getLatLong()));
+        googleMap.addMarker(new MarkerOptions().position(selectedBuilding.getLatLong()));
         mDrawerLayout.closeDrawers();
-        return building;
-    }
-
-    private LatLng currentLatLng() {
-        if (location != null){
-            return new LatLng(location.getLatitude(), location.getLongitude());
-        }
-        else return null;
+        return selectedBuilding;
     }
 
     @Override
@@ -186,21 +189,19 @@ public class WatMap extends AppCompatActivity implements LocationListener {
 
     private void prepareDatabase() {
         SQLiteDatabase myDB = null;
-        String TableName = "building";
+        String tableName = "building";
 
         try {
             myDB = this.openOrCreateDatabase("WatMap", MODE_PRIVATE, null);
+            myDB.execSQL("DROP TABLE "+tableName);
+            myDB.execSQL("CREATE TABLE " + tableName + " (number VARCHAR(4), latitude DOUBLE, longitude);");
 
-            myDB.execSQL("CREATE TABLE IF NOT EXISTS " + TableName + " (number VARCHAR(4), latitude DOUBLE, longitude);");
-
-            myDB.execSQL("INSERT INTO "
-                    + TableName
-                    + " VALUES ('100', 52.253200, 20.900204),('65', 52.255337, 20.903774),('61', 52.254157, 20.902425);");
+            myDB.execSQL(DatabaseRes.getBuildings());
         } catch (Exception e){
             e.printStackTrace();
         }
         if (myDB == null) throw new Error("Database is null");
-        Cursor c = myDB.rawQuery("SELECT * FROM " + TableName , null);
+        Cursor c = myDB.rawQuery("SELECT * FROM " + tableName , null);
         if (c.moveToFirst()) {
             while (!c.isAfterLast()) {
                 String numberCursor = c.getString(c.getColumnIndex("number"));
@@ -215,11 +216,8 @@ public class WatMap extends AppCompatActivity implements LocationListener {
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        if (mDrawerToggle.onOptionsItemSelected(item)) {
-            return true;
-        }
+        return mDrawerToggle.onOptionsItemSelected(item) || super.onOptionsItemSelected(item);
 
-        return super.onOptionsItemSelected(item);
     }
 
     @Override
@@ -245,7 +243,7 @@ public class WatMap extends AppCompatActivity implements LocationListener {
     }
 
     private void addDrawerItems() {
-        mAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, buildings.keySet().toArray(new String[buildings.size()]));
+        ArrayAdapter<String> mAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, buildings.keySet().toArray(new String[buildings.size()]));
         mDrawerList.setAdapter(mAdapter);
 
         mDrawerList.setOnItemClickListener(new AdapterView.OnItemClickListener() {
@@ -277,23 +275,19 @@ public class WatMap extends AppCompatActivity implements LocationListener {
 
 //-----------------------------------DIRECTIONS FETCHER---------------------
 
-    private List<LatLng> latLngs = new ArrayList<>();
-    private List<Marker> markers = new ArrayList<>();
-    private boolean directionsFetched = false;
-    private Animator animator = new Animator();
+    private List<LatLng> checkpoints = new ArrayList<>();
 
     private static final HttpTransport HTTP_TRANSPORT = AndroidHttp.newCompatibleTransport();
     private static final JsonFactory JSON_FACTORY = new JacksonFactory();
 
     public void clearMarkers() {
         googleMap.clear();
-        markers.clear();
     }
 
-    public void addPolylineToMap(List<LatLng> latLngs) {
+    public void addPolylineToMap(List<LatLng> checkpoints) {
         PolylineOptions options = new PolylineOptions();
-        for (LatLng latLng : latLngs) {
-            options.add(latLng);
+        for (LatLng checkpoint : checkpoints) {
+            options.add(checkpoint);
         }
         googleMap.addPolyline(options);
     }
@@ -314,17 +308,12 @@ public class WatMap extends AppCompatActivity implements LocationListener {
         clearMarkers();
         String[] destination = this.destination.split(",");
         googleMap.addMarker(new MarkerOptions().position(new LatLng(Double.parseDouble(destination[0]), Double.parseDouble(destination[1]))));
-//        getActivity().setProgressBarIndeterminateVisibility(Boolean.TRUE);
 
     }
         protected void onPostExecute(Void result) {
-            directionsFetched=true;
-            addPolylineToMap(latLngs);
-            GoogleMapUtils.fixZoomForLatLngs(googleMap, latLngs);
-            animator.setInitialCameraPosition(latLngs.get(0), latLngs.get(1));
-           // animator.startAnimation(false, latLngs);
-            //updateNavigationStopStart();
-            //getActivity().setProgressBarIndeterminateVisibility(Boolean.FALSE);
+            addPolylineToMap(checkpoints);
+            GoogleMapUtils.fixZoomForLatLngs(googleMap, checkpoints);
+            setInitialCameraPosition(checkpoints.get(0), checkpoints.get(1));
         }
 
         @Override
@@ -347,7 +336,7 @@ public class WatMap extends AppCompatActivity implements LocationListener {
                 HttpResponse httpResponse = request.execute();
                 DirectionsResult directionsResult = httpResponse.parseAs(DirectionsResult.class);
                 String encodedPoints = directionsResult.routes.get(0).overviewPolyLine.points;
-                latLngs = PolyUtil.decode(encodedPoints);
+                checkpoints = PolyUtil.decode(encodedPoints);
             } catch (Exception ex) {
                 ex.printStackTrace();
             }
@@ -355,242 +344,18 @@ public class WatMap extends AppCompatActivity implements LocationListener {
         }
     }
 
-//----------------------------------------ANIMATOR-----------------------------
-
-    private final Handler mHandler = new Handler();
-
-    public class Animator implements Runnable {
-
-        private static final int ANIMATE_SPEEED = 1500;
-        private static final int ANIMATE_SPEEED_TURN = 1500;
-        private static final int BEARING_OFFSET = 20;
-
-        private final Interpolator interpolator = new LinearInterpolator();
-
-        private boolean animating = false;
-
-        private List<LatLng> latLngs = new ArrayList<>();
-
-        int currentIndex = 0;
-
-        float tilt = 90;
-        float zoom = 15.5f;
-        boolean upward=true;
-
-        long start = SystemClock.uptimeMillis();
-
-        LatLng endLatLng = null;
-        LatLng beginLatLng = null;
-
-        boolean showPolyline = false;
-
-        private Marker trackingMarker;
-
-        public void reset() {
-            resetMarkers();
-            start = SystemClock.uptimeMillis();
-            currentIndex = 0;
-            endLatLng = getEndLatLng();
-            beginLatLng = getBeginLatLng();
-
-        }
-
-        public void stopAnimation() {
-            animating=false;
-            mHandler.removeCallbacks(animator);
-
-        }
-
-        public void initialize(boolean showPolyLine) {
-            reset();
-            this.showPolyline = showPolyLine;
-
-            highLightMarker(0);
-
-            if (showPolyLine) {
-                polyLine = initializePolyLine();
-            }
-
-            // We first need to put the camera in the correct position for the first run (we need 2 markers for this).....
-            LatLng markerPos = latLngs.get(0);
-            LatLng secondPos = latLngs.get(1);
-
-            setInitialCameraPosition(markerPos, secondPos);
-
-        }
-
-        private void setInitialCameraPosition(LatLng markerPos, LatLng secondPos) {
-
-            float bearing = GoogleMapUtils.bearingBetweenLatLngs(markerPos,secondPos);
-
-            trackingMarker = googleMap.addMarker(new MarkerOptions().position(markerPos)
-                    .title("title")
-                    .snippet("snippet"));
-
-            float mapZoom = googleMap.getCameraPosition().zoom >=16 ? googleMap.getCameraPosition().zoom : 16;
-
-            CameraPosition cameraPosition =
-                    new CameraPosition.Builder()
-                            .target(markerPos)
-                            .bearing(bearing + BEARING_OFFSET)
-                            .tilt(90)
-                            .zoom(mapZoom)
-                            .build();
-
-            googleMap.animateCamera(
-                    CameraUpdateFactory.newCameraPosition(cameraPosition),
-                    ANIMATE_SPEEED_TURN,
-                    new GoogleMap.CancelableCallback() {
-
-                        @Override
-                        public void onFinish() {
-                            System.out.println("finished camera");
-                            /*animator.reset();
-                            Handler handler = new Handler();
-                            handler.post(animator);*/
-                        }
-
-                        @Override
-                        public void onCancel() {
-                            System.out.println("cancelling camera");
-                        }
-                    }
-            );
-        }
-
-        private Polyline polyLine;
-        private PolylineOptions rectOptions = new PolylineOptions();
-
-
-        private Polyline initializePolyLine() {
-            //polyLinePoints = new ArrayList<LatLng>();
-            rectOptions.add(latLngs.get(0));
-            return googleMap.addPolyline(rectOptions);
-        }
-
-        /**
-         * Add the marker to the polyline.
-         */
-        private void updatePolyLine(LatLng latLng) {
-            List<LatLng> points = polyLine.getPoints();
-            points.add(latLng);
-            polyLine.setPoints(points);
-        }
-
-        public void startAnimation(boolean showPolyLine,List<LatLng> latLngs) {
-            if (trackingMarker!=null) {
-                trackingMarker.remove();
-            }
-            this.animating = true;
-            this.latLngs=latLngs;
-            if (latLngs.size()>2) {
-                initialize(showPolyLine);
-            }
-
-        }
-
-        public boolean isAnimating() {
-            return this.animating;
-        }
-
-
-        @Override
-        public void run() {
-
-            long elapsed = SystemClock.uptimeMillis() - start;
-            double t = interpolator.getInterpolation((float)elapsed/ANIMATE_SPEEED);
-            LatLng intermediatePosition = SphericalUtil.interpolate(beginLatLng, endLatLng, t);
-
-            Double mapZoomDouble = 18.5-( Math.abs((0.5- t))*5);
-            float mapZoom =  mapZoomDouble.floatValue();
-
-            System.out.println("mapZoom = " + mapZoom);
-
-            trackingMarker.setPosition(intermediatePosition);
-
-            if (showPolyline) {
-                updatePolyLine(intermediatePosition);
-            }
-
-            if (t< 1) {
-                mHandler.postDelayed(this, 16);
-            } else {
-
-                System.out.println("Move to next marker.... current = " + currentIndex + " and size = " + latLngs.size());
-                // imagine 5 elements -  0|1|2|3|4 currentindex must be smaller than 4
-                if (currentIndex<latLngs.size()-2) {
-
-                    currentIndex++;
-
-                    endLatLng = getEndLatLng();
-                    beginLatLng = getBeginLatLng();
-
-
-                    start = SystemClock.uptimeMillis();
-
-                    Double heading = SphericalUtil.computeHeading(beginLatLng, endLatLng);
-
-                    highLightMarker(currentIndex);
-
-                    CameraPosition cameraPosition =
-                            new CameraPosition.Builder()
-                                    .target(endLatLng)
-                                    .bearing(heading.floatValue() /*+ BEARING_OFFSET*/) // .bearing(bearingL  + BEARING_OFFSET)
-                                    .tilt(tilt)
-                                    .zoom(googleMap.getCameraPosition().zoom)
-                                    .build();
-
-                    googleMap.animateCamera(
-                            CameraUpdateFactory.newCameraPosition(cameraPosition),
-                            ANIMATE_SPEEED_TURN,
-                            null
-                    );
-
-                    //start = SystemClock.uptimeMillis();
-                    mHandler.postDelayed(this, 16);
-
-                } else {
-                    currentIndex++;
-                    highLightMarker(currentIndex);
-                    stopAnimation();
-                }
-
-            }
-        }
-
-
-
-        private LatLng getEndLatLng() {
-            return latLngs.get(currentIndex+1);
-        }
-
-        private LatLng getBeginLatLng() {
-            return latLngs.get(currentIndex);
-        }
-
-    }
-
-    private void highLightMarker(int index) {
-        if (markers.size()>=index+1) {
-            highLightMarker(markers.get(index));
-        }
-    }
-
-    /**
-     * Highlight the marker by marker.
-     */
-    private void highLightMarker(Marker marker) {
-
-        if (marker!=null) {
-            marker.setIcon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE));
-            marker.showInfoWindow();
-        }
-
-    }
-
-    private void resetMarkers() {
-        for (Marker marker : this.markers) {
-            marker.setIcon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED));
-        }
+    private void setInitialCameraPosition(LatLng markerPos, LatLng secondPos) {
+
+        float bearing = GoogleMapUtils.bearingBetweenLatLngs(markerPos,secondPos);
+        float mapZoom = googleMap.getCameraPosition().zoom >=16 ? googleMap.getCameraPosition().zoom : 16;
+
+        CameraPosition cameraPosition = new CameraPosition.Builder()
+                .target(markerPos)
+                .bearing(bearing)
+                .tilt(90)
+                .zoom(mapZoom)
+                .build();
+
+        googleMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPosition));
     }
 }
